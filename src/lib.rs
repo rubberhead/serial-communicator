@@ -4,7 +4,7 @@ extern crate serialport;
 
 use std::error::Error; 
 use std::io::{self, BufRead, BufReader}; 
-use serialport::SerialPort; 
+use serialport::SerialPort;  
 
 /// Tries to read a raw QWORD from the given `port`.
 /// 
