@@ -124,7 +124,7 @@ pub fn read_i32_raw(port: &mut dyn SerialPort) -> Result<i32, io::Error> {
 /// - `alloc::string::FromUtf8Error` if cannot parse `u8` buffer to `String`.
 pub fn read_string_until_byte(port: &mut dyn SerialPort, endbyte: u8) -> Result<String, Box<dyn Error>> {
     let mut br = BufReader::new(port);  
-    let mut buf: Vec<u8> = Vec::with_capacity(4096); 
+    let mut buf: Vec<u8> = Vec::with_capacity(4096);
     br.read_until(endbyte, &mut buf)?; 
     return Ok(String::from_utf8(buf)?); 
 }

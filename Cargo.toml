@@ -9,3 +9,4 @@ edition = "2021"
 [dependencies]
 serialport = "4.2"
 log = "0.4.17"
+stderrlog = "0.4"

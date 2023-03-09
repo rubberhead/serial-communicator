@@ -1,9 +1,9 @@
-#![cfg(unix)]
 #![allow(dead_code)]
 
 use std::io; 
 use std::io::Write; 
 use std::time::Duration;
+use std::thread::sleep; 
 
 use serialport::{SerialPortType, SerialPort}; 
 use serial_communicator::*;
@@ -11,7 +11,7 @@ use log::{error, info};
 
 mod util; 
 
-const DEFAULT_BAUD_RATE: u32 = 9600; 
+const DEFAULT_BAUD_RATE: u32 = 115200; 
 const HANDSHAKE_TXM: &str = "HELLO ARDUINO"; 
 const HANDSHAKE_RXM: &str = "HELLO RASPI"; 
 
@@ -30,6 +30,7 @@ const EOF_TERM:  u8 = 0x04;
 ///    device cannot be found. 
 fn _find_arduino_serialport(baud_rate: u32) -> io::Result<Box<dyn SerialPort>> {
     const _FN_NAME: &str = "[serial-communicator::_find_arduino_serialport]"; 
+    stderrlog::new().module(module_path!()).init().unwrap();
 
     let available_ports = serialport::available_ports()?; 
     for info in &available_ports {
@@ -61,7 +62,8 @@ fn _find_arduino_serialport(baud_rate: u32) -> io::Result<Box<dyn SerialPort>> {
                         // => Received incorrectly (maybe change baud rate?)
                         continue; 
                     }, 
-                    _ => continue, // => Cannot receive
+                    _ => // continue, // => Cannot receive
+                    return Ok(port), // Currently no handshake impl, return as well
                 }
             }
         }
@@ -88,6 +90,8 @@ fn _find_arduino_serialport(baud_rate: u32) -> io::Result<Box<dyn SerialPort>> {
 ///   sent alongside stdin. The current impl is much less messy though.
 /// - `_find_arduino_serialport` can maybe be expanded to accept multiple baud rates for handshaking 
 ///   purposes. This is not too high of a concern, though. 
+/// - It works on real Arduino (ofc.) but buffering needs work maybe -- this can also affect 
+///   handshaking impl.
 fn main() {
     const _FN_NAME: &str = "[serial-communicator::main]"; 
 
@@ -103,6 +107,8 @@ fn main() {
     let mut buffer: String = String::with_capacity(4096); 
     let mut eof_flag = false; 
 
+    sleep(Duration::from_secs(3));
+
     loop {
         /* 2. Read from `stdin` and re-send to Arduino */
         buffer.clear(); 
@@ -114,7 +120,7 @@ fn main() {
             }, 
             Ok(_) => (), 
             Err(e) => {
-                error!("{} Unexpected error when reading from stdin: {:#?}", _FN_NAME, e); 
+                error!("{} Unexpected error when reading from stdin: \n{:#?}", _FN_NAME, e); 
                 return; 
             } 
         };
@@ -125,7 +131,7 @@ fn main() {
         ) {
             Ok(_) => (), 
             Err(e) => {
-                error!("{} Unexpected error when sending to arduino tty: {:#?}", _FN_NAME, e); 
+                error!("{} Unexpected error when sending to arduino tty: \n{:#?}", _FN_NAME, e); 
                 return; 
             }
         }
@@ -133,12 +139,12 @@ fn main() {
         /* 3. Wait read on Arduino, send to `stdout` */
         match read_string_until_byte(arduino_port.as_mut(), LF_TERM) {
             Ok(s) => 
-            if let Err(e) = io::stdout().write_all(&s.as_bytes()[..s.len() - 1]) {
-                error!("{} Unexpected error when writing to stdout: {:#?}", _FN_NAME, e); 
+            if let Err(e) = io::stdout().write_all(&s.as_bytes()[0..s.len() - 1]) {
+                error!("{} Unexpected error when writing to stdout: \n{:#?}", _FN_NAME, e); 
                 return; 
             }, 
             Err(e) => {
-                error!("{} Unexpected error when reading from arduino tty: {:#?}", _FN_NAME, e); 
+                error!("{} Unexpected error when reading from arduino tty: \n{:#?}", _FN_NAME, e); 
                 return; 
             }
         }
