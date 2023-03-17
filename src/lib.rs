@@ -5,7 +5,8 @@
 extern crate serialport;
 
 use std::error::Error;
-use std::io::{self, BufRead, BufReader};
+use std::fmt::Display;
+use std::io::{self, BufRead, BufReader, ErrorKind};
 use serialport::SerialPort; 
 
 /// Tries to read a raw QWORD from the given `port`.
@@ -127,7 +128,7 @@ pub fn read_i32_raw(port: &mut dyn SerialPort) -> Result<i32, io::Error> {
 pub fn read_string_until_byte(port: &mut dyn SerialPort, endbyte: u8) -> Result<String, Box<dyn Error>> {
     let mut br = BufReader::new(port); 
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
-    br.read_until(endbyte, &mut buf)?;
+    br.read_until(endbyte, &mut buf)?; 
     Ok(String::from_utf8(buf)?)
 }
 
@@ -146,5 +147,66 @@ pub fn write_str_ends_with(
     port.write_all(str_to_write.as_bytes())?;
     unsafe {
         port.write_all(&*endbyte_ptr)
+    }
+}
+
+#[derive(PartialEq, Eq, Clone)]
+pub enum Action {
+    Read, 
+    Write(String)
+}
+
+#[derive(Debug)]
+pub enum ActionConversionError {
+    UndefinedOpSequence(String), 
+    EmptyOpSequence(String), 
+    MalformedOpSequence(String), 
+}
+
+impl Display for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Action::Read => 
+                write!(f, "READ"), 
+            Action::Write(s) => 
+                write!(f, "WRITE {s}"), 
+        }
+    }
+}
+
+impl TryFrom<&str> for Action {
+    type Error = ActionConversionError;
+
+    fn try_from(action: &str) -> Result<Self, Self::Error> {
+        const _FN_NAME: &str = "[Action as TryFrom::try_from]"; 
+
+        let mut split = action.split_ascii_whitespace(); 
+        let op: &str; 
+        match split.next() {
+            Some("READ") => 
+                return Ok(Action::Read), 
+            Some(s) => 
+                op = s, 
+            None => 
+                return Err(ActionConversionError::EmptyOpSequence(
+                    format!("{_FN_NAME} Empty sequence as input")
+                )), 
+        }
+
+        // [TODO] Assumming 1 argument...
+        let mut arg_buff: String = String::with_capacity(action.len()); 
+        while let Some(s) = split.next() {
+            arg_buff.push_str(s); 
+            arg_buff.push_str(" "); 
+        }
+        
+        match op {
+            "WRITE" => 
+                return Ok(Action::Write(arg_buff)), 
+            _ => 
+                return Err(ActionConversionError::UndefinedOpSequence(
+                    format!("{_FN_NAME} Undefined operation {op} from sequence {action}")
+                )), 
+        }
     }
 }
