@@ -10,6 +10,4 @@ edition = "2021"
 serialport = "4.2"
 log = "0.4.17"
 simple_logger = "4"
-
-[simple_logger]
-features = ["stderr"]
+itertools = "0.10"

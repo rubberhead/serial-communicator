@@ -7,6 +7,9 @@ extern crate serialport;
 use std::error::Error;
 use std::fmt::Display;
 use std::io::{self, BufRead, BufReader};
+
+use log::error;
+use itertools::intersperse; 
 use serialport::SerialPort; 
 
 /// Tries to read a raw QWORD from the given `port`.
@@ -132,6 +135,46 @@ pub fn read_string_until_byte(port: &mut dyn SerialPort, endbyte: u8) -> Result<
     Ok(String::from_utf8(buf)?)
 }
 
+/// Tries to read a String from the given `port`, then clones the content of the String into given 
+/// `buf` (the intermediate value is dropped). 
+/// 
+/// ## Ok
+/// `usize` number of bytes read from the buffer. 0 in case of time-outs. 
+/// 
+/// ## Err
+/// Same as `read_string_until_byte`
+pub fn read_into_string_buffer(
+    port: &mut dyn SerialPort, 
+    endbyte: u8, 
+    buf: &mut String
+) -> Result<usize, Box<dyn Error>> {
+    const _FN_NAME: &str = "[serial_communicator::try_read_into_buffer]"; 
+
+    match read_string_until_byte(port, endbyte) {
+        Ok(s) => {
+            buf.push_str(&s); 
+            return Ok(buf.len()); 
+        }, 
+        Err(e) => {
+            let maybe_io_error = e.downcast_ref::<io::Error>(); 
+            match maybe_io_error {
+                Some(e) if e.kind() == io::ErrorKind::TimedOut => {
+                    // => Ignore time-outs
+                    error!("{_FN_NAME} Timed out when trying to retrieve String from port."); 
+                    return Ok(0); 
+                }
+                _ => {
+                    error!(
+                        "{_FN_NAME} Unexpected error when reading from arduino tty: \n{:#?}", 
+                        e
+                    );
+                    return Err(e); 
+                }
+            }
+        }
+    }
+}
+
 /// Tries to write a string slice into the given `port`.
 pub fn write_str_raw(port: &mut dyn SerialPort, str_to_write: &str) -> Result<(), io::Error> {
     port.write_all(str_to_write.as_bytes())
@@ -193,13 +236,9 @@ impl TryFrom<&str> for Action {
                 )), 
         }
 
-        // [TODO] Assumming 1 argument...
-        let mut arg_buff: String = String::with_capacity(action.len()); 
-        while let Some(s) = split.next() {
-            arg_buff.push_str(s); 
-            arg_buff.push_str(" "); 
-        }
-        
+        // [TODO] Assuming 1 argument...
+        let arg_buff = intersperse(split, " ").collect(); 
+
         match op {
             "WRITE" => 
                 return Ok(Action::Write(arg_buff)), 

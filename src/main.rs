@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-#![cfg(unix)]
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
 use std::io;
@@ -9,12 +8,11 @@ use std::thread::sleep;
 
 use serialport::{SerialPortType, SerialPort};
 use serial_communicator::Action; 
-use serial_communicator::{read_string_until_byte, write_str_ends_with};
+use serial_communicator::{read_into_string_buffer, write_str_ends_with};
 use log::{error, info};
 
 mod util;
 
-// const DEFAULT_BAUD_RATE: u32 = 115_200;
 const BAUD_RATE_OPTIONS: [u32; 2] = [115_200, 9_600]; 
 const LF_TERM: u8 = b'\n'; 
 
@@ -44,6 +42,7 @@ fn find_arduino_serialports() -> io::Result<Vec<Box<dyn SerialPort>>> {
                 sleep(Duration::from_secs(3)); 
                 
                 if let Ok(_) = handshake(port.as_mut()) {
+                    port.set_timeout(Duration::from_secs(1))?; 
                     port_buf.push(port); 
                 } 
             }
@@ -151,7 +150,8 @@ fn main() {
     let arduino_port: &mut dyn SerialPort = arduino_ports[0].as_mut(); 
 
     info!("{_FN_NAME} Connected to Arduino"); 
-    let mut action_buffer: String = String::with_capacity(4096);
+    let mut action_buffer: String = String::with_capacity(256);
+    let mut read_buffer:   String = String::with_capacity(256); 
     
     /* Obtain stdout stream lock */
     let mut stdout = io::stdout().lock(); 
@@ -176,42 +176,38 @@ fn main() {
             }
         };
 
-        // [TODO] Cleanup
         match action {
             Ok(Action::Read) => {
                 // => Wait read on Arduino, send to `stdout`
-                match read_string_until_byte(arduino_port, LF_TERM) {
-                    Ok(s) => {
-                        if let Err(e) = write!(stdout, "{s}") {
-                            error!(
-                                "{} Unexpected error when writing to stdout: \n{:#?}", 
-                                _FN_NAME, 
-                                e
-                            );
-                            return;
-                        }
-                    },
-                    Err(e) => {
-                        error!(
-                            "{} Unexpected error when reading from arduino tty: \n{:#?}", 
-                            _FN_NAME, 
-                            e
-                        );
-                        return;
-                    }
+                if let Err(_) = read_into_string_buffer(
+                    arduino_port, 
+                    LF_TERM, 
+                    &mut read_buffer
+                ) { 
+                    return; 
                 }
+                if let Err(e) = stdout.write_all(read_buffer.as_bytes()) {
+                    error!(
+                        "{_FN_NAME} Unexpected error when writing to stdout: \n{:#?}", 
+                        e
+                    ); 
+                    return; 
+                }
+                read_buffer.clear(); 
             }, 
             Ok(Action::Write(s)) => {
-                match write_str_ends_with(arduino_port, &s, LF_TERM) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        error!(
-                            "{} Unexpected error when sending to arduino tty: \n{:#?}", 
-                            _FN_NAME, 
-                            e
-                        );
-                        return;
-                    }
+                // => Write to Arduino
+                if let Err(e) = write_str_ends_with(
+                    arduino_port, 
+                    &s, 
+                    LF_TERM
+                ) {
+                    error!(
+                        "{} Unexpected error when sending to arduino tty: \n{:#?}", 
+                        _FN_NAME, 
+                        e
+                    );
+                    return;
                 }
             }, 
             Err(e) => 
