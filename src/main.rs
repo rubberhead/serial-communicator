@@ -8,7 +8,7 @@ use std::time::Duration;
 use std::thread::sleep;
 
 use serialport::{SerialPortType, SerialPort};
-use serial_communicator::{Action, ActionConversionError}; 
+use serial_communicator::Action; 
 use serial_communicator::{read_string_until_byte, write_str_ends_with};
 use log::{error, info};
 
