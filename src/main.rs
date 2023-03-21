@@ -94,8 +94,8 @@ fn handshake(port: &mut dyn SerialPort) -> io::Result<()> {
                 continue; 
             }, 
             Ok(s) if &s[..s.len() - 1] == HANDSHAKE_RX_MSG => (), 
-            Ok(_) => {
-                error!("{_FN_NAME} Mismatched rx msg from Arduino; {i}/10"); 
+            Ok(s) => {
+                error!("{_FN_NAME} Mismatched rx msg from Arduino: {s}; {i}/10"); 
                 continue; 
             }
         }
@@ -155,7 +155,7 @@ fn main() {
     
     /* Obtain stdout stream lock */
     let mut stdout = io::stdout().lock(); 
-    
+
     loop {
         /* 2. Read from `stdin` and re-send to Arduino */
         action_buffer.clear();

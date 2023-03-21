@@ -9,5 +9,5 @@ edition = "2021"
 [dependencies]
 serialport = "4.2"
 log = "0.4.17"
-simple_logger = "4"
+simple_logger = { version = "4", features = ["stderr"] }
 itertools = "0.10"
