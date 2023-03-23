@@ -1,6 +1,6 @@
 [package]
 name = "serial-communicator"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Zhengyi Chen"]
 edition = "2021"
 
@@ -9,5 +9,9 @@ edition = "2021"
 [dependencies]
 serialport = "4.2"
 log = "0.4.17"
-simple_logger = { version = "4", features = ["stderr"] }
+simple_logger = { version = "4.1", features = ["stderr"] }
 itertools = "0.10"
+
+[build-dependencies]
+bindgen = "0.64"
+cc = "1.0"

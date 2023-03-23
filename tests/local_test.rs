@@ -4,7 +4,8 @@ extern crate serial_communicator;
 
 use std::time::Duration;
 use serialport::{SerialPort, TTYPort, Result}; 
-use serial_communicator::*; 
+
+use serial_communicator::util::serial_helper::*; 
 
 const TEST_QWORD: u64                = 0xcafe_beef_dead_acab; 
 const TEST_QWORD_FLIPPED_ENDIAN: u64 = 0xabac_adde_efbe_feca; 

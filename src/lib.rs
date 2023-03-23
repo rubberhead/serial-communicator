@@ -1,251 +1,157 @@
 #![allow(dead_code)]
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
-#![allow(clippy::missing_errors_doc, clippy::cast_possible_wrap)]
 
-extern crate serialport;
-
-use std::error::Error;
 use std::fmt::Display;
-use std::io::{self, BufRead, BufReader};
 
-use log::error;
-use itertools::intersperse; 
-use serialport::SerialPort; 
+use itertools::Itertools;
 
-/// Tries to read a raw QWORD from the given `port`.
-///
-/// This function gives no concern to endianness.
-pub fn read_qword_raw(port: &mut dyn SerialPort) -> Result<u64, io::Error> {
-    let mut buf = [0_u8; 8];
-    port.read_exact(&mut buf)?;
-    let qword_ptr: *const u64 = std::ptr::addr_of!(buf).cast();
-    unsafe {
-        Ok(*qword_ptr)
+pub mod util; 
+mod bindings;
+
+pub type Instruction = Vec<u8>; 
+
+#[derive(PartialEq, Eq, Clone)]
+pub enum Request {
+    Read, 
+    Write(Instruction)
+}
+
+impl Request {
+    fn _try_parse_opcode(opword: &str) -> Result<u8, ()> {
+        match opword {
+            "SENSOR" => Ok(bindings::SENSOR), 
+            "MAGNET" => Ok(bindings::MAGNET), 
+            "LED"    => Ok(bindings::LED), 
+            // "HANDSHAKE" => bindings::HANDSHAKE, 
+            "ACK"    => Ok(bindings::ACK), 
+            "QUIT"   => Ok(bindings::QUIT), 
+            _        => Err(()), 
+        }
     }
-}
 
-/// Tries to read a raw QWORD from the given `port`,
-/// then converts it to the opposite endian.
-///
-/// Useful for, say, reading x86-based numeric values on an ARM machine.
-pub fn read_qword_flipped_endian(port: &mut dyn SerialPort) -> Result<u64, io::Error> {
-    let mut buf = [0_u8; 8];
-    port.read_exact(&mut buf)?;
-    buf.reverse();
-    unsafe {
-        Ok(*std::ptr::addr_of!(buf).cast())
-    }
-}
+    fn _try_parse_arguments_into(
+        instr_buf: &mut Instruction, 
+        words: &mut dyn Iterator<Item = &str>
+    ) -> Result<usize, ()> {
+        if instr_buf.len() != 1 { return Err(()); }
+        let mut idx: usize = 1; 
+        let opcode = instr_buf[0]; 
+        match opcode {
+            bindings::MAGNET => {
+                let elems = words.chunks(3); 
+                for elem in &elems {
+                    if let Some((x, y, is_on)) = elem.collect_tuple() {
+                        let res = (
+                            x.parse::<f32>(), 
+                            y.parse::<f32>(), 
+                            is_on.parse::<bool>()
+                        ); 
+                        if res.0.is_err() || res.1.is_err() || res.2.is_err() { return Err(()); }
 
-/// Tries to write a raw QWORD to the given `port`.
-///
-/// This function gives no concern to endianness.
-pub fn write_qword_raw(port: &mut dyn SerialPort, val: u64) -> Result<(), io::Error> {
-    let buf_ptr: *const [u8; 8] = (val as *const u64).cast();
-    unsafe {
-        port.write_all(&*buf_ptr)
-    }
-}
+                        // Insert x
+                        let x_in_le_bytes = res.0.unwrap().to_le_bytes(); 
+                        for b in x_in_le_bytes { 
+                            instr_buf.push(b); 
+                            idx += 1; 
+                        }
 
-/// Tries to write a QWORD with flipped endian to the given `port`.
-///
-/// Useful for, say, writing x86-based numerics to ARM machines.
-pub fn write_qword_flipped_endian(port: &mut dyn SerialPort, val: u64) -> Result<(), io::Error> {
-    let buf_ptr: *mut [u8; 8] = (val as *mut u64).cast();
-    unsafe {
-        let buf: &mut [u8; 8] = &mut *buf_ptr;
-        buf.reverse();
-        port.write_all(buf)
-    }
-}
+                        // Insert y
+                        let y_in_le_bytes = res.1.unwrap().to_le_bytes(); 
+                        for b in y_in_le_bytes {
+                            instr_buf.push(b); 
+                            idx += 1; 
+                        }
 
-/// Tries to read a raw QWORD from the given `port` and converts it into `i64`.
-///
-/// This function gives no concern to endianness.
-pub fn read_i64_raw(port: &mut dyn SerialPort) -> Result<i64, io::Error> {
-    Ok(read_qword_raw(port)? as i64)
-}
-
-/// Tries to read a raw DWORD from the given `port`.
-///
-/// This function gives no concern to endianness.
-pub fn read_dword_raw(port: &mut dyn SerialPort) -> Result<u32, io::Error> {
-    let mut buf = [0_u8; 4];
-    port.read_exact(&mut buf)?;
-    let dword_ptr: *const u32 = std::ptr::addr_of!(buf).cast();
-    unsafe {
-        Ok(*dword_ptr)
-    }
-}
-
-/// Tries to read a raw DWORD from the given `port`,
-/// then converts it to the opposite endian.
-///
-/// Useful for, say, reading x86-based numeric values on an ARM machine.
-pub fn read_dword_flipped_endian(port: &mut dyn SerialPort) -> Result<u32, io::Error> {
-    let mut buf = [0_u8; 4];
-    port.read_exact(&mut buf)?;
-    buf.reverse();
-    unsafe {
-        Ok(*std::ptr::addr_of!(buf).cast())
-    }
-}
-
-/// Tries to write a raw DWORD to the given `port`.
-///
-/// This function gives no concern to endianness.
-pub fn write_dword_raw(port: &mut dyn SerialPort, val: u32) -> Result<(), io::Error> {
-    let buf_ptr: *const [u8; 4] = (val as *const u32).cast();
-    unsafe {
-        port.write_all(&*buf_ptr)
-    }
-}
-
-/// Tries to write a DWORD with flipped endian to the given `port`.
-///
-/// Useful for, say, writing x86-based numerics to ARM machines.
-pub fn write_dword_flipped_endian(port: &mut dyn SerialPort, val: u32) -> Result<(), io::Error> {
-    let buf_ptr: *mut [u8; 4] = (val as *mut u32).cast();
-    unsafe {
-        let buf: &mut [u8; 4] = &mut *buf_ptr;
-        buf.reverse();
-        port.write_all(buf)
-    }
-}
-
-/// Tries to read a raw DWORD from the given `port` and converts it into `i64`.
-///
-/// This function gives no concern to endianness.
-pub fn read_i32_raw(port: &mut dyn SerialPort) -> Result<i32, io::Error> {
-    Ok(read_dword_raw(port)? as i32)
-}
-
-/// Tries to read a String from the given `port`.
-///
-/// ## Ok
-/// Owned `String` containing the sent text until and including `endbyte`. I don't make the rules.
-///
-/// ## Err
-/// - `io::Error` if cannot read from `port`.
-/// - `alloc::string::FromUtf8Error` if cannot parse `u8` buffer to `String`.
-pub fn read_string_until_byte(port: &mut dyn SerialPort, endbyte: u8) -> Result<String, Box<dyn Error>> {
-    let mut br = BufReader::new(port); 
-    let mut buf: Vec<u8> = Vec::with_capacity(4096);
-    br.read_until(endbyte, &mut buf)?; 
-    Ok(String::from_utf8(buf)?)
-}
-
-/// Tries to read a String from the given `port`, then clones the content of the String into given 
-/// `buf` (the intermediate value is dropped). 
-/// 
-/// ## Ok
-/// `usize` number of bytes read from the buffer. 0 in case of time-outs. 
-/// 
-/// ## Err
-/// Same as `read_string_until_byte`
-pub fn read_into_string_buffer(
-    port: &mut dyn SerialPort, 
-    endbyte: u8, 
-    buf: &mut String
-) -> Result<usize, Box<dyn Error>> {
-    const _FN_NAME: &str = "[serial_communicator::try_read_into_buffer]"; 
-
-    match read_string_until_byte(port, endbyte) {
-        Ok(s) => {
-            buf.push_str(&s); 
-            return Ok(buf.len()); 
-        }, 
-        Err(e) => {
-            let maybe_io_error = e.downcast_ref::<io::Error>(); 
-            match maybe_io_error {
-                Some(e) if e.kind() == io::ErrorKind::TimedOut => {
-                    // => Ignore time-outs
-                    error!("{_FN_NAME} Timed out when trying to retrieve String from port."); 
-                    return Ok(0); 
+                        // Insert is_on: bool as u8
+                        instr_buf.push(res.2.unwrap().into()); 
+                        idx += 1; 
+                    }
+                    // Else malformed, continue.
                 }
-                _ => {
-                    error!(
-                        "{_FN_NAME} Unexpected error when reading from arduino tty: \n{:#?}", 
-                        e
-                    );
-                    return Err(e); 
+                return Ok(idx - 1); 
+            }, 
+            bindings::LED => {
+                for word in words {
+                    if let Ok(rgb_int) =  word.parse::<u32>() {
+                        let tmp = rgb_int.to_le_bytes(); 
+                        for b in &tmp[..tmp.len() - 1] {
+                            // Correctness? 
+                            instr_buf.push(*b); 
+                            idx += 1; 
+                        }
+                    }
+                    // Else malformed, continue.
                 }
-            }
+                return Ok(idx - 1); 
+            }, 
+            _ => 
+                return Ok(0), 
         }
     }
 }
 
-/// Tries to write a string slice into the given `port`.
-pub fn write_str_raw(port: &mut dyn SerialPort, str_to_write: &str) -> Result<(), io::Error> {
-    port.write_all(str_to_write.as_bytes())
-}
-
-/// Tries to write a string slice into the given `port`, appending `endbyte` at behind.
-pub fn write_str_ends_with(
-    port: &mut dyn SerialPort,
-    str_to_write: &str,
-    endbyte: u8
-) -> Result<(), io::Error> {
-    let endbyte_ptr: *const [u8; 1] = std::ptr::addr_of!(endbyte).cast();
-    port.write_all(str_to_write.as_bytes())?;
-    unsafe {
-        port.write_all(&*endbyte_ptr)
-    }
-}
-
-#[derive(PartialEq, Eq, Clone)]
-pub enum Action {
-    Read, 
-    Write(String)
-}
-
 #[derive(Debug)]
-pub enum ActionConversionError {
+pub enum RequestConversionError {
     UndefinedOpSequence(String), 
     EmptyOpSequence(String), 
     MalformedOpSequence(String), 
 }
 
-impl Display for Action {
+impl Display for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Action::Read => 
+            Request::Read => 
                 write!(f, "READ"), 
-            Action::Write(s) => 
-                write!(f, "WRITE {s}"), 
+            Request::Write(s) => 
+                write!(f, "WRITE {:?}", s), 
         }
     }
 }
 
-impl TryFrom<&str> for Action {
-    type Error = ActionConversionError;
+impl TryFrom<&str> for Request {
+    type Error = RequestConversionError;
 
+    /// 
+    /// 
     fn try_from(action: &str) -> Result<Self, Self::Error> {
         const _FN_NAME: &str = "[Action as TryFrom::try_from]"; 
 
+        /* 1. Parse serial-communicator op */
         let mut split = action.split_ascii_whitespace(); 
-        let op: &str; 
         match split.next() {
-            Some("READ") => 
-                return Ok(Action::Read), 
+            Some("READ")  => return Ok(Request::Read), 
+            Some("WRITE") => (), 
             Some(s) => 
-                op = s, 
+                return Err(RequestConversionError::UndefinedOpSequence(
+                    format!("{_FN_NAME} Expected \"READ\" or \"WRITE\", got {s}")
+                )), 
             None => 
-                return Err(ActionConversionError::EmptyOpSequence(
+                return Err(RequestConversionError::EmptyOpSequence(
                     format!("{_FN_NAME} Empty sequence as input")
                 )), 
         }
 
-        // [TODO] Assuming 1 argument...
-        let arg_buff = intersperse(split, " ").collect(); 
-
-        match op {
-            "WRITE" => 
-                return Ok(Action::Write(arg_buff)), 
-            _ => 
-                return Err(ActionConversionError::UndefinedOpSequence(
-                    format!("{_FN_NAME} Undefined operation {op} from sequence {action}")
+        /* 2. Parse Arduino op */
+        let mut instr_buf: Vec<u8> = vec![0; 512]; 
+        match split.next() {
+            Some(s) => {
+                if let Ok(opcode) = Request::_try_parse_opcode(s) {
+                    instr_buf.push(opcode); 
+                } else {
+                    return Err(RequestConversionError::UndefinedOpSequence(
+                        format!("{_FN_NAME} Undefined or invalid op name in sequence: {s}")
+                    )); 
+                }
+            }, 
+            None => 
+                return Err(RequestConversionError::EmptyOpSequence(
+                    format!("{_FN_NAME} Expected Arduino operation but 0 argument provided")
                 )), 
         }
+
+        /* 3. Parse Arduino arguments */
+        let _ = Request::_try_parse_arguments_into(&mut instr_buf, &mut split)
+            .unwrap(); 
+        return Ok(Request::Write(instr_buf)); 
     }
 }

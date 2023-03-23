@@ -7,11 +7,13 @@ use std::time::Duration;
 use std::thread::sleep;
 
 use serialport::{SerialPortType, SerialPort};
-use serial_communicator::Action; 
-use serial_communicator::{read_into_string_buffer, write_str_ends_with};
+use serial_communicator::Request; 
 use log::{error, info};
 
 mod util;
+mod bindings;
+
+use util::serial_helper::*; 
 
 const BAUD_RATE_OPTIONS: [u32; 2] = [115_200, 9_600]; 
 const LF_TERM: u8 = b'\n'; 
@@ -22,7 +24,7 @@ const LF_TERM: u8 = b'\n';
 /// - `Ok(ports)` which encapsulates `Vec` of `dyn SerialPort` trait objects.
 /// - `Err(io::Error)` which is of kind `io::ErrorKind::NotFound`, indicating that no suitable `tty`
 ///    devices could be found.
-fn find_arduino_serialports() -> io::Result<Vec<Box<dyn SerialPort>>> {
+fn _find_arduino_serialports() -> io::Result<Vec<Box<dyn SerialPort>>> {
     const _FN_NAME: &str = "[serial-communicator::find_arduino_serialport]";
 
     let mut port_buf: Vec<Box<dyn SerialPort>> = Vec::with_capacity(2); 
@@ -41,7 +43,10 @@ fn find_arduino_serialports() -> io::Result<Vec<Box<dyn SerialPort>>> {
                 // Give time for Arduino to reset connection
                 sleep(Duration::from_secs(3)); 
                 
-                if let Ok(_) = handshake(port.as_mut()) {
+                if let Ok(_) = _handshake(
+                    port.as_mut(), 
+                    port_buf.len().try_into().unwrap_or(u8::MAX) // Lazy impl
+                ) {
                     port.set_timeout(Duration::from_secs(1))?; 
                     port_buf.push(port); 
                 } 
@@ -63,63 +68,61 @@ fn find_arduino_serialports() -> io::Result<Vec<Box<dyn SerialPort>>> {
 /// 
 /// For an Arduino-side sample impl, refer to `example_handshake_impl` which might expand to a 
 /// whole header in the future. 
-fn handshake(port: &mut dyn SerialPort) -> io::Result<()> {
+fn _handshake(port: &mut dyn SerialPort, id: u8) -> io::Result<()> {
     const _FN_NAME: &str = "[serial-communicator::handshake]"; 
-    const HANDSHAKE_TX_MSG: &str = "PC TO ARDUINO_1";
-    const HANDSHAKE_RX_MSG: &str = "ARDUINO_1 TO PC";
+    let handshake_msg: [u8; 2] = [bindings::HANDSHAKE, id]; 
 
     for i in 1..=10 {
         info!("{_FN_NAME} Waiting for Arduino: {i}/10..."); 
 
         /* 1. Send TX to Arduino */
-        let write_tx_res = serial_communicator::write_str_ends_with(
+        let write_tx_res = write_all_bytes(
             port, 
-            HANDSHAKE_TX_MSG, 
-            LF_TERM
-        ); 
+            &handshake_msg
+        );
         if let Err(e) = write_tx_res {
             error!("{_FN_NAME} Cannot write tx msg to Arduino: {:#?}; {i}/10", e); 
             continue; 
         }
 
-        eprintln!("{}", port.bytes_to_read().unwrap()); 
         /* 2. Receive RX from Arduino */
-        let read_rx_res = serial_communicator::read_string_until_byte(
-            port, 
-            LF_TERM
-        ); 
+        let read_rx_res = read_all_bytes(port); 
         match read_rx_res {
             Err(e) => {
                 error!("{_FN_NAME} Cannot read rx msg from Arduino: {:#?}; {i}/10", e); 
                 continue; 
             }, 
-            Ok(s) if &s[..s.len() - 1] == HANDSHAKE_RX_MSG => (), 
-            Ok(s) => {
-                error!("{_FN_NAME} Mismatched rx msg from Arduino: {s}; {i}/10"); 
+            Ok(v) if v.as_ref() == handshake_msg => (), 
+            Ok(v) => {
+                error!("{_FN_NAME} Mismatched rx msg from Arduino: {:?}; {i}/10", v); 
                 continue; 
             }
         }
 
         /* 3. Send back RX to Arduino */
-        let write_rx_res = serial_communicator::write_str_ends_with(
+        let write_rx_res = write_all_bytes(
             port, 
-            HANDSHAKE_RX_MSG, 
-            LF_TERM
+            &handshake_msg
         ); 
         if let Err(e) = write_rx_res {
             error!("{_FN_NAME} Cannot write back rx msg to Arduino: {:#?}; {i}/10", e); 
             continue; 
         }
         
-        let read_successful_msg = serial_communicator::read_string_until_byte(
-            port, 
-            LF_TERM
-        ); 
-        if let Err(e) = read_successful_msg {
-            error!("{_FN_NAME} Unexpected Arduino tty connection drop: {:#?}; {i}/10", e); 
-            continue; 
+        /* 4. Receive success message from Arduino */
+        let read_successful_msg = read_all_bytes(port);
+        match read_successful_msg {
+            Ok(v) if v.as_ref() == [bindings::ACK] => (), 
+            Ok(v) => {
+                error!("{_FN_NAME} Mismatched success msg from Arduino: {:?}; {i}/10", v); 
+                continue; 
+            }, 
+            Err(e) => {
+                error!("{_FN_NAME} Unexpected Arduino tty connection drop: {:#?}; {i}/10", e); 
+                continue; 
+            }
         }
-        info!("{_FN_NAME} {}", read_successful_msg.unwrap().trim_end()); 
+        info!("{_FN_NAME} Handshake complete. Listening..."); 
         return Ok(()); 
     }
     return Err(io::Error::new(
@@ -130,15 +133,12 @@ fn handshake(port: &mut dyn SerialPort) -> io::Result<()> {
 
 /// Communicator which works in a WRITE-READ loop. 
 /// Assumming Cosmos' ctrl loop it should be sufficient? 
-/// 
-/// ### Upcoming FIXME...
-/// - Timeout handling
 fn main() {
     const _FN_NAME: &str = "[serial-communicator::main]";
     simple_logger::init_with_env().unwrap(); 
 
     /* 1. Find Arduino devices */
-    let mut arduino_ports = match find_arduino_serialports() {
+    let mut arduino_ports = match _find_arduino_serialports() {
         Ok(p) => p,
         Err(e) => {
             // => Cannot find arduino ttyusb @ given baud rate, return
@@ -150,12 +150,11 @@ fn main() {
     let arduino_port: &mut dyn SerialPort = arduino_ports[0].as_mut(); 
 
     info!("{_FN_NAME} Connected to Arduino"); 
-    let mut action_buffer: String = String::with_capacity(256);
-    let mut read_buffer:   String = String::with_capacity(256); 
+    let mut action_buffer: String  = String::with_capacity(512);
+    let mut read_buffer:   Vec<u8> = vec![0; 512]; 
     
     /* Obtain stdout stream lock */
     let mut stdout = io::stdout().lock(); 
-
     loop {
         /* 2. Read from `stdin` and re-send to Arduino */
         action_buffer.clear();
@@ -168,7 +167,7 @@ fn main() {
             },
             Ok(_) => {
                 // => Try convert to `Action` instance
-                action = Action::try_from(action_buffer.as_ref())
+                action = Request::try_from(action_buffer.as_ref())
             },
             Err(e) => {
                 error!("{_FN_NAME} Unexpected error when reading from stdin: \n{:#?}", e);
@@ -177,30 +176,32 @@ fn main() {
         };
 
         match action {
-            Ok(Action::Read) => {
+            Ok(Request::Read) => {
                 // => Wait read on Arduino, send to `stdout`
-                if let Err(_) = read_into_string_buffer(
+                if let Err(_) = read_all_bytes_into(
                     arduino_port, 
-                    LF_TERM, 
                     &mut read_buffer
                 ) { 
                     return; 
                 }
-                if let Err(e) = stdout.write_all(read_buffer.as_bytes()) {
+                if let Err(e) = stdout.write_all(&read_buffer) {
                     error!(
                         "{_FN_NAME} Unexpected error when writing to stdout: \n{:#?}", 
                         e
                     ); 
                     return; 
                 }
+                info!(
+                    "{_FN_NAME} Received {:x?}", 
+                    read_buffer
+                ); 
                 read_buffer.clear(); 
             }, 
-            Ok(Action::Write(s)) => {
+            Ok(Request::Write(v)) => {
                 // => Write to Arduino
-                if let Err(e) = write_str_ends_with(
+                if let Err(e) = write_all_bytes(
                     arduino_port, 
-                    &s, 
-                    LF_TERM
+                    &v, 
                 ) {
                     error!(
                         "{} Unexpected error when sending to arduino tty: \n{:#?}", 
