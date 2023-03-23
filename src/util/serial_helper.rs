@@ -191,46 +191,34 @@ pub fn write_str_ends_with(
     }
 }
 
-pub fn read_bytes(port: &mut dyn SerialPort, count: usize) -> io::Result<Vec<u8>> {
-    let mut buf: Vec<u8> = Vec::with_capacity(count); 
-    port.read_exact(&mut buf)?;
-    Ok(buf)
-}
-
-pub fn read_bytes_into(
-    port: &mut dyn SerialPort, 
-    buf: &mut Vec<u8>, 
-    count: usize
-) -> io::Result<usize> {
-    let mut byte_buf: [u8; 1] = [0]; 
-    let mut idx = 0; 
-    while idx < count {
-        match port.read(&mut byte_buf) {
-            Ok(_) =>
-                buf[idx] = byte_buf[0], 
-            Err(e) if e.kind() == ErrorKind::UnexpectedEof => 
-                // Dunno if e contains relevant metrics...
-                return Ok(idx), 
-            Err(e) => 
-                return Err(e), 
-        }
-        idx += 1; 
-    }
-    return Ok(idx); 
-}
-
-pub fn read_all_bytes(port: &mut dyn SerialPort) -> io::Result<Vec<u8>> {
-    let mut buf: Vec<u8> = Vec::with_capacity(
-        port.bytes_to_read()?.try_into().unwrap_or(u32::MAX as usize)
-    ); 
-    port.read_to_end(&mut buf)?; 
-    Ok(buf)
-}
-
 pub fn read_all_bytes_into(port: &mut dyn SerialPort, buf: &mut Vec<u8>) -> io::Result<usize> {
-    port.read_to_end(buf)
+    const _FN_NAME: &str = "[util::serial_helper::read_all_bytes_into]"; 
+
+    std::thread::sleep(port.timeout()); 
+    if port.bytes_to_read()? == 0 {
+        return Err(std::io::Error::new(
+            ErrorKind::TimedOut, 
+            "{_FN_NAME} Timed out while trying to read from port"
+        )); 
+    }
+
+    buf.resize(port.bytes_to_read()? as usize, 0); 
+    port.read_exact(buf)?;
+    return Ok(buf.len()); 
 }
 
 pub fn write_all_bytes(port: &mut dyn SerialPort, byte_msg: &[u8]) -> io::Result<()> {
+    const _FN_NAME: &str = "[util::serial_helper::write_all_bytes]"; 
+
+    if port.bytes_to_write()? != 0 {
+        std::thread::sleep(port.timeout()); 
+        if port.bytes_to_write()? != 0 {
+            return Err(std::io::Error::new(
+                ErrorKind::TimedOut, 
+                "{_FN_NAME} Timed out while trying to write into port"
+            )); 
+        }
+    }
+    
     port.write_all(byte_msg)
 }

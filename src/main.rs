@@ -16,7 +16,6 @@ mod bindings;
 use util::serial_helper::*; 
 
 const BAUD_RATE_OPTIONS: [u32; 2] = [115_200, 9_600]; 
-const LF_TERM: u8 = b'\n'; 
 
 /// Tries to connect to relevant Arduino tty devices (i.e., all Arduinos connected to host). 
 ///
@@ -34,22 +33,16 @@ fn _find_arduino_serialports() -> io::Result<Vec<Box<dyn SerialPort>>> {
             // Do not check for metadata, which enables 3rd party boards to be used
             for baud_rate in BAUD_RATE_OPTIONS {
                 let port = serialport::new(&info.port_name, baud_rate)
-                    .timeout(Duration::from_secs(10))
+                    .timeout(Duration::from_secs(1))
                     .flow_control(serialport::FlowControl::None)
                     .open();
                 if port.is_err() { continue; } // Cannot open port
-                let mut port = port.unwrap();
+                let port = port.unwrap();
 
                 // Give time for Arduino to reset connection
                 sleep(Duration::from_secs(3)); 
                 
-                if let Ok(_) = _handshake(
-                    port.as_mut(), 
-                    port_buf.len().try_into().unwrap_or(u8::MAX) // Lazy impl
-                ) {
-                    port.set_timeout(Duration::from_secs(1))?; 
-                    port_buf.push(port); 
-                } 
+                port_buf.push(port); 
             }
         }
     }
@@ -62,73 +55,6 @@ fn _find_arduino_serialports() -> io::Result<Vec<Box<dyn SerialPort>>> {
     } else {
         return Ok(port_buf); 
     }
-}
-
-/// Raspi-side handshake implementation. 
-/// 
-/// For an Arduino-side sample impl, refer to `example_handshake_impl` which might expand to a 
-/// whole header in the future. 
-fn _handshake(port: &mut dyn SerialPort, id: u8) -> io::Result<()> {
-    const _FN_NAME: &str = "[serial-communicator::handshake]"; 
-    let handshake_msg: [u8; 2] = [bindings::HANDSHAKE, id]; 
-
-    for i in 1..=10 {
-        info!("{_FN_NAME} Waiting for Arduino: {i}/10..."); 
-
-        /* 1. Send TX to Arduino */
-        let write_tx_res = write_all_bytes(
-            port, 
-            &handshake_msg
-        );
-        if let Err(e) = write_tx_res {
-            error!("{_FN_NAME} Cannot write tx msg to Arduino: {:#?}; {i}/10", e); 
-            continue; 
-        }
-
-        /* 2. Receive RX from Arduino */
-        let read_rx_res = read_all_bytes(port); 
-        match read_rx_res {
-            Err(e) => {
-                error!("{_FN_NAME} Cannot read rx msg from Arduino: {:#?}; {i}/10", e); 
-                continue; 
-            }, 
-            Ok(v) if v.as_ref() == handshake_msg => (), 
-            Ok(v) => {
-                error!("{_FN_NAME} Mismatched rx msg from Arduino: {:?}; {i}/10", v); 
-                continue; 
-            }
-        }
-
-        /* 3. Send back RX to Arduino */
-        let write_rx_res = write_all_bytes(
-            port, 
-            &handshake_msg
-        ); 
-        if let Err(e) = write_rx_res {
-            error!("{_FN_NAME} Cannot write back rx msg to Arduino: {:#?}; {i}/10", e); 
-            continue; 
-        }
-        
-        /* 4. Receive success message from Arduino */
-        let read_successful_msg = read_all_bytes(port);
-        match read_successful_msg {
-            Ok(v) if v.as_ref() == [bindings::ACK] => (), 
-            Ok(v) => {
-                error!("{_FN_NAME} Mismatched success msg from Arduino: {:?}; {i}/10", v); 
-                continue; 
-            }, 
-            Err(e) => {
-                error!("{_FN_NAME} Unexpected Arduino tty connection drop: {:#?}; {i}/10", e); 
-                continue; 
-            }
-        }
-        info!("{_FN_NAME} Handshake complete. Listening..."); 
-        return Ok(()); 
-    }
-    return Err(io::Error::new(
-        io::ErrorKind::ConnectionRefused, 
-        format!("{_FN_NAME} Cannot handshake with port device.")
-    )); 
 }
 
 /// Communicator which works in a WRITE-READ loop. 
@@ -178,11 +104,14 @@ fn main() {
         match action {
             Ok(Request::Read) => {
                 // => Wait read on Arduino, send to `stdout`
-                if let Err(_) = read_all_bytes_into(
+                if let Err(e) = read_all_bytes_into(
                     arduino_port, 
                     &mut read_buffer
                 ) { 
-                    return; 
+                    error!(
+                        "{_FN_NAME} Unexpected error when reading from Arduino: \n{:#?}", 
+                        e
+                    ); 
                 }
                 if let Err(e) = stdout.write_all(&read_buffer) {
                     error!(

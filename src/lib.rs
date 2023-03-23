@@ -73,8 +73,8 @@ impl Request {
             bindings::LED => {
                 for word in words {
                     if let Ok(rgb_int) =  word.parse::<u32>() {
-                        let tmp = rgb_int.to_le_bytes(); 
-                        for b in &tmp[..tmp.len() - 1] {
+                        let tmp = rgb_int.to_be_bytes(); 
+                        for b in &tmp[1..] {
                             // Correctness? 
                             instr_buf.push(*b); 
                             idx += 1; 
@@ -111,8 +111,6 @@ impl Display for Request {
 impl TryFrom<&str> for Request {
     type Error = RequestConversionError;
 
-    /// 
-    /// 
     fn try_from(action: &str) -> Result<Self, Self::Error> {
         const _FN_NAME: &str = "[Action as TryFrom::try_from]"; 
 
@@ -132,7 +130,7 @@ impl TryFrom<&str> for Request {
         }
 
         /* 2. Parse Arduino op */
-        let mut instr_buf: Vec<u8> = vec![0; 512]; 
+        let mut instr_buf: Vec<u8> = Vec::with_capacity(512); 
         match split.next() {
             Some(s) => {
                 if let Ok(opcode) = Request::_try_parse_opcode(s) {
@@ -150,8 +148,12 @@ impl TryFrom<&str> for Request {
         }
 
         /* 3. Parse Arduino arguments */
-        let _ = Request::_try_parse_arguments_into(&mut instr_buf, &mut split)
-            .unwrap(); 
+        if let Err(_) = Request::_try_parse_arguments_into(&mut instr_buf, &mut split) {
+            return Err(RequestConversionError::MalformedOpSequence(
+                format!("{_FN_NAME} Malformed argument list: {}", split.collect::<String>())
+            )); 
+        }
+             
         return Ok(Request::Write(instr_buf)); 
     }
 }
