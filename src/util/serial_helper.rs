@@ -198,7 +198,7 @@ pub fn read_all_bytes_into(port: &mut dyn SerialPort, buf: &mut Vec<u8>) -> io::
     if port.bytes_to_read()? == 0 {
         return Err(std::io::Error::new(
             ErrorKind::TimedOut, 
-            "{_FN_NAME} Timed out while trying to read from port"
+            format!("{} Timed out while trying to read from port", _FN_NAME)
         )); 
     }
 

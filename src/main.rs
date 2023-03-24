@@ -41,7 +41,7 @@ fn _find_arduino_serialports() -> io::Result<Vec<Box<dyn SerialPort>>> {
 
                 // Give time for Arduino to reset connection
                 sleep(Duration::from_secs(3)); 
-                
+
                 port_buf.push(port); 
             }
         }
@@ -79,8 +79,6 @@ fn main() {
     let mut action_buffer: String  = String::with_capacity(512);
     let mut read_buffer:   Vec<u8> = vec![0; 512]; 
     
-    /* Obtain stdout stream lock */
-    let mut stdout = io::stdout().lock(); 
     loop {
         /* 2. Read from `stdin` and re-send to Arduino */
         action_buffer.clear();
@@ -104,15 +102,18 @@ fn main() {
         match action {
             Ok(Request::Read) => {
                 // => Wait read on Arduino, send to `stdout`
-                if let Err(e) = read_all_bytes_into(
+                while let Err(e) = read_all_bytes_into(
                     arduino_port, 
                     &mut read_buffer
                 ) { 
+                    if e.kind() == std::io::ErrorKind::TimedOut { continue; }
                     error!(
                         "{_FN_NAME} Unexpected error when reading from Arduino: \n{:#?}", 
                         e
                     ); 
+                    break; 
                 }
+                let mut stdout = io::stdout(); 
                 if let Err(e) = stdout.write_all(&read_buffer) {
                     error!(
                         "{_FN_NAME} Unexpected error when writing to stdout: \n{:#?}", 
@@ -120,8 +121,15 @@ fn main() {
                     ); 
                     return; 
                 }
+                if let Err(e) = stdout.flush() {
+                    error!(
+                        "{_FN_NAME} Unexpected error when flushing stdout: \n{:#?}", 
+                        e
+                    ); 
+                    return; 
+                } 
                 info!(
-                    "{_FN_NAME} Received {:x?}", 
+                    "{_FN_NAME} Received \"{:x?}\"", 
                     read_buffer
                 ); 
                 read_buffer.clear(); 
@@ -139,9 +147,22 @@ fn main() {
                     );
                     return;
                 }
+                if let Err(e) = arduino_port.flush() {
+                    error!(
+                        "{_FN_NAME} Unexpected error when flushing arduino tty: \n{:#?}", 
+                        e
+                    ); 
+                    return; 
+                }
+                info!(
+                    "{_FN_NAME} Written {:x?}", 
+                    v
+                ); 
             }, 
             Err(e) => 
                 error!("{_FN_NAME} Invalid input from stdin: \n{:#?}", e), 
         }
     }
+
+    // arduino_port.clear(serialport::ClearBuffer::All); 
 }
