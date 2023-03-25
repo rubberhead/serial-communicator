@@ -29,8 +29,11 @@ fn _find_arduino_serialports() -> io::Result<Vec<Box<dyn SerialPort>>> {
     let mut port_buf: Vec<Box<dyn SerialPort>> = Vec::with_capacity(2); 
     let available_ports = serialport::available_ports()?;
     for info in &available_ports {
-        if let SerialPortType::UsbPort(_) = &info.port_type {
+        if let SerialPortType::UsbPort(t) = &info.port_type {
             // Do not check for metadata, which enables 3rd party boards to be used
+            info!("{:#?}", t); 
+            if t.vid != 0x3343 || t.pid != 0x0042 { continue; } // Not an Arduino
+
             for baud_rate in BAUD_RATE_OPTIONS {
                 let port = serialport::new(&info.port_name, baud_rate)
                     .timeout(Duration::from_secs(1))
@@ -80,6 +83,8 @@ fn main() {
     let mut read_buffer:   Vec<u8> = vec![0; 512]; 
     
     loop {
+        arduino_port.clear(serialport::ClearBuffer::All); 
+
         /* 2. Read from `stdin` and re-send to Arduino */
         action_buffer.clear();
         let action; 
