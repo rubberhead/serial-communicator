@@ -12,8 +12,8 @@ pub type Instruction = Vec<u8>;
 
 #[derive(PartialEq, Eq, Clone)]
 pub enum Request {
-    Read, 
-    Write(Instruction)
+    // Read, 
+    Write(Instruction), 
 }
 
 impl Request {
@@ -100,8 +100,8 @@ pub enum RequestConversionError {
 impl Display for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Request::Read => 
-                write!(f, "READ"), 
+            // Request::Read => 
+            //    write!(f, "READ"), 
             Request::Write(s) => 
                 write!(f, "WRITE {:?}", s), 
         }
@@ -117,11 +117,11 @@ impl TryFrom<&str> for Request {
         /* 1. Parse serial-communicator op */
         let mut split = action.split_ascii_whitespace(); 
         match split.next() {
-            Some("READ")  => return Ok(Request::Read), 
+            // Some("READ")  => return Ok(Request::Read), 
             Some("WRITE") => (), 
             Some(s) => 
                 return Err(RequestConversionError::UndefinedOpSequence(
-                    format!("{_FN_NAME} Expected \"READ\" or \"WRITE\", got {s}")
+                    format!("{_FN_NAME} Expected \"WRITE\", got {s}")
                 )), 
             None => 
                 return Err(RequestConversionError::EmptyOpSequence(
