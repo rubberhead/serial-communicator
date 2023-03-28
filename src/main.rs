@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
-use std::io::{self, ErrorKind};
+use std::io;
 use std::io::Write; 
 use std::time::Duration;
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_serial::SerialStream;
 use log::{error, info};
 
@@ -22,6 +22,14 @@ fn _find_devices() -> Vec<SerialStream> {
     let mut port_buf: Vec<SerialStream> = Vec::new(); 
     if let Ok(ports) = tokio_serial::available_ports() {
         for port_info in ports {
+            let port_type = port_info.port_type;
+            if let tokio_serial::SerialPortType::UsbPort(ref info) = port_type {
+                if info.vid != 0x2341 || info.pid != 0x0042 {
+                    continue; 
+                }
+            } else {
+                continue; 
+            }
             let port = tokio_serial::new(port_info.port_name, BAUD_RATE)
                 .timeout(Duration::from_secs(1)); 
             if let Ok(port) = SerialStream::open(&port) {
@@ -35,38 +43,27 @@ fn _find_devices() -> Vec<SerialStream> {
 async fn write_and_wait_response(
     port_stream: &mut SerialStream, 
     instruction: Instruction
-) -> io::Result<(Instruction, usize)> {
+) -> io::Result<Instruction> {
     const _FN_NAME: &str = "[serial-communicator::write_and_wait_response]"; 
+    let opcode = instruction[0]; 
 
     port_stream.writable().await?; 
-    match port_stream.try_write(&instruction) {
-        Ok(_) => {
-            AsyncWriteExt::flush(port_stream).await?; 
-        }, 
-        Err(e) => {
-            error!(
-                "{_FN_NAME} Unexpected error when writing to port_stream: \n{:#?}", 
-                e
-            ); 
-            return Err(e); 
-        }
-    }
+    AsyncWriteExt::write_all(port_stream, &instruction).await?; 
+    AsyncWriteExt::flush(port_stream).await?; 
 
     port_stream.readable().await?; 
-    let mut response_buf: Vec<u8> = vec![0; 8]; 
-    let mut res = port_stream.try_read(&mut response_buf); 
-    while let Err(e) = res {
-        if e.kind() == ErrorKind::WouldBlock {
-            // => Continue at block
-            // [TODO] Timeout?
-            res = port_stream.try_read(&mut response_buf); 
-            continue; 
-        }
-        return Err(e); 
+    let mut response_buf: Vec<u8> = Vec::with_capacity(8);  
+    if opcode == bindings::SENSOR { 
+        // => Wait for 8 bytes
+        response_buf = vec![0; 8]; 
+        AsyncReadExt::read_exact(port_stream, &mut response_buf).await?; 
+    } else {
+        // => Wait for 1 byte
+        AsyncReadExt::read_buf(port_stream, &mut response_buf).await?; 
     }
-    let read_amnt = res.unwrap(); 
-    info!("{_FN_NAME} Received {:x?}", &response_buf[..read_amnt]); 
-    return Ok((response_buf, read_amnt)); 
+    
+    info!("{_FN_NAME} Received {:x?}", response_buf); 
+    return Ok(response_buf); 
 }
 
 #[tokio::main]
@@ -81,9 +78,10 @@ async fn main() {
         return; 
     }
     let mut port_stream = port_streams.pop().unwrap(); 
+    std::thread::sleep(std::time::Duration::from_secs(3)); 
     info!("{_FN_NAME} Connected to Arduino"); 
 
-    let mut action_buffer: String  = String::with_capacity(1024);
+    let mut action_buffer: String = String::with_capacity(1024);
     // let mut read_buffer:   Vec<u8> = vec![0; 1024]; 
     
     loop {
@@ -110,8 +108,8 @@ async fn main() {
             Ok(Request::Write(v)) => {
                 // => Write to Arduino, then wait on response and send to stdout
                 match write_and_wait_response(&mut port_stream, v).await {
-                    Ok((response, response_len)) => {
-                        if let Err(e) = io::stdout().write_all(&response[..response_len]) {
+                    Ok(response) => {
+                        if let Err(e) = io::stdout().write_all(&response) {
                             error!("{_FN_NAME} WRITE: Unexpected error when writing to stdout: \n{:#?}", e); 
                             return; 
                         }
